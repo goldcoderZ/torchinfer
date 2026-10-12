@@ -64,6 +64,33 @@ def vector_add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     add_kernel[grid](x, y, out, n_elements, BLOCK_SIZE=1024)
     return out
 
+# === [AFTER LOWERING] lowered 'vector_add_wrapper_vector_add' Source ===
+# @torch.fx.wrap
+# def vector_add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+#     out = torch.empty_like(x)
+#     n_elements = x.numel()
+#     # >>> ADDED BY AOT-T:
+#     # This line is generated to query the static compiler metadata (optimal blocks, warps, stages)
+#     # determined when AOT-T ran the Triton-to-Cubin compiler.
+#     num_warps, num_stages, num_ctas, auto_tma = add_kernel_meta()
+#     # >>> ADDED BY AOT-T:
+#     grid = ((n_elements + 1023) // 1024,)
+#     # >>> ADDED BY AOT-T (REPLACED ORIGINAL TRITON LAUNCHER):
+#     # AOT-T replaces the high-overhead Python-based JIT launcher 'add_kernel[grid](...)' 
+#     # with a direct native binding call to the compiled binary library via PyTorch Custom Operators.
+#     torch.ops.aot_tensor.add_kernel(
+#         grid, x, y, out, n_elements, 
+#         BLOCK_SIZE=1024, 
+#         num_warps=num_warps, 
+#         num_stages=num_stages, 
+#         num_ctas=num_ctas, 
+#         auto_tma=auto_tma
+#     )
+# === Source Code of add_kernel_meta ===
+# def add_kernel_meta():
+#     # Returns: (num_warps, num_stages, num_ctas, auto_tma)
+#     return (4, 3, 1, False)
+
 
 class AddModel(torch.nn.Module):
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
