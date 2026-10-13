@@ -190,8 +190,8 @@ void {func_name}_dummy_op(
     std::vector<int64_t> grid,
     {cpp_params}
 ) {{
-  // Do nothing.  The op is a dummy for model transform,
-  // processing, and splitting services.
+  // Do nothing.  The op is a dummy for CPU and Meta dispatch,
+  // which is useful for shape inference, graph capturing, etc.
 }}
 }} // namespace
 
