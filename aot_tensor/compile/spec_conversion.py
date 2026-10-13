@@ -304,24 +304,39 @@ def signature_list_to_dict(
 
 
 # CC (compute capability) to AMD GPU architecture mapping
-# CC is a 2-digit shorthand: 94 -> gfx942, 95 -> gfx950
+# CC is the arch's `major * 10 + minor`, i.e. gfx<major><minor><stepping> minus
+# the stepping digit: 94 -> gfx942, 95 -> gfx950, 125 -> gfx1250.
 HIP_CC_TO_ARCH_INFO: dict[int, str] = {
     90: "gfx90a",
     94: "gfx942",
     95: "gfx950",
+    125: "gfx1250",
 }
+
+
+# gfx9 is wave64; gfx10 and up (including gfx1250 / MI450) are wave32.
+def get_hip_warp_size(arch: str) -> int:
+    return 64 if arch.startswith("gfx9") else 32
+
 
 # Reverse mapping: architecture string -> CC string
 HIP_ARCH_TO_CC: dict[str, str] = {v: str(k) for k, v in HIP_CC_TO_ARCH_INFO.items()}
 
-HIP_CC_MI350X: str = "95"  # CC string for gfx950 (MI350X/MI355X)
+# Archs whose FP8 is the OCP encoding (fp8e4nv); gfx90a and gfx942 use FNUZ
+# (fp8e4b8), and the two do not convert to one another.
+HIP_CC_OCP_FP8: frozenset[str] = frozenset(
+    {
+        "95",  # gfx950 (MI350X/MI355X)
+        "125",  # gfx1250 (MI450/MI455)
+    }
+)
 
 
 def _normalize_cc(cc: set[str]) -> set[str]:
-    """Normalize CC values to 2-digit format for internal comparison.
+    """Normalize CC values to the numeric shorthand for internal comparison.
 
-    Accepts both 2-digit format ("94", "95") and Triton driver format
-    ("gfx942", "gfx950"). Returns 2-digit CC strings.
+    Accepts both the numeric shorthand ("94", "95", "125") and Triton driver format
+    ("gfx942", "gfx950", "gfx1250"). Returns CC strings.
     """
     return {HIP_ARCH_TO_CC.get(c, c) for c in cc}
 
@@ -334,7 +349,7 @@ def get_fp8_replacement_signature_for_amd(
     Args:
         spec: Compiled spec dict with 'signature' in dict format.
         cc: Set of CC strings in either format:
-            - 2-digit format: {"94"} for gfx942
+            - CC shorthand: {"94"} for gfx942, {"125"} for gfx1250
             - Triton driver format: {"gfx942"}
             See HIP_CC_TO_ARCH_INFO.
 
@@ -343,11 +358,13 @@ def get_fp8_replacement_signature_for_amd(
     """
     normalized_cc: set[str] = _normalize_cc(cc)
 
+    uses_ocp_fp8: bool = bool(normalized_cc & HIP_CC_OCP_FP8)
+
     def replace_fp8_type(dtype_str: str) -> str:
         if "fp8e4nv" in dtype_str:
-            if HIP_CC_MI350X not in normalized_cc:
+            if not uses_ocp_fp8:
                 return dtype_str.replace("fp8e4nv", "fp8e4b8")
-        elif "fp8e4b8" in dtype_str and HIP_CC_MI350X in normalized_cc:
+        elif "fp8e4b8" in dtype_str and uses_ocp_fp8:
             return dtype_str.replace("fp8e4b8", "fp8e4nv")
         return dtype_str
 

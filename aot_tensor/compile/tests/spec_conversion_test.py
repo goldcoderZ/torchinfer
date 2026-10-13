@@ -12,6 +12,8 @@ from aot_tensor.compile.spec_conversion import (
     extract_constants,
     get_fp8_replacement_signature_for_amd,
     get_fp8_replacement_signature_for_sm80,
+    get_hip_warp_size,
+    HIP_CC_TO_ARCH_INFO,
     make_instance_descriptor,
     signature_list_to_dict,
     SignatureConstraints,
@@ -238,6 +240,23 @@ class SignatureListToDictTest(unittest.TestCase):
         self.assertEqual(signature_list_to_dict(signature, constants), {})
 
 
+class HipArchTest(unittest.TestCase):
+    """Tests for the AMD arch tables."""
+
+    @parameterized.expand(
+        [
+            ("gfx942", 94, "gfx942", 64),
+            ("gfx950", 95, "gfx950", 64),
+            ("gfx1250", 125, "gfx1250", 32),
+        ]
+    )
+    def test_cc_arch_and_warp_size(
+        self, _name: str, cc: int, arch: str, warp_size: int
+    ) -> None:
+        self.assertEqual(HIP_CC_TO_ARCH_INFO[cc], arch)
+        self.assertEqual(get_hip_warp_size(arch), warp_size)
+
+
 class GetFP8ReplacementTest(unittest.TestCase):
     """Tests for get_fp8_replacement_signature_for_amd/sm80."""
 
@@ -251,6 +270,10 @@ class GetFP8ReplacementTest(unittest.TestCase):
             ("amd_mi350x_gfx_format", {"gfx950"}, "*fp8e4nv", "*fp8e4nv"),
             # AMD: fp8e4b8 -> fp8e4nv on MI350X
             ("amd_mi350x_reverse", {"gfx950"}, "*fp8e4b8", "*fp8e4nv"),
+            # AMD: MI450 (gfx1250) is OCP FP8 like MI350X
+            ("amd_mi450_cc_format", {"125"}, "*fp8e4nv", "*fp8e4nv"),
+            ("amd_mi450_gfx_format", {"gfx1250"}, "*fp8e4nv", "*fp8e4nv"),
+            ("amd_mi450_reverse", {"gfx1250"}, "*fp8e4b8", "*fp8e4nv"),
             # non-FP8 unchanged
             ("amd_non_fp8", {"gfx942"}, "*fp32", "*fp32"),
         ]
