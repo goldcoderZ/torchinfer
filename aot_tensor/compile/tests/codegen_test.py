@@ -41,6 +41,7 @@ from aot_tensor.compile.triton.codegen import (
     generate_kernel_cpp_content,
     generate_torch_op_content,
     is_non_empty_mapping_of_type,
+    spec_guards,
     validate_unique_kernel_names,
 )
 from aot_tensor.compile.triton.spec_processing import AutotuneAttrs, KernelSpec, OpsUnit
@@ -1398,6 +1399,75 @@ class IntWidthCodegenTest(unittest.TestCase):
         # Second spec (i64): neither fits_i32 nor static_cast
         self.assertNotIn("fits_i32", specs[1])
         self.assertNotIn("static_cast", specs[1])
+
+
+class PointerRange32CodegenTest(unittest.TestCase):
+    """Tests for the AMD ``tt.pointer_range=32`` variant codegen."""
+
+    def _create_unit(self) -> OpsUnit:
+        """Tagged variant first, untagged fallback second (from_raw_specs order)."""
+        tagged = KernelSpec(
+            signature={0: "*fp32", 1: "i32"},
+            constants={2: 64},
+            divisible_by_16={0},
+            divisible_by_8=set(),
+            pointer_range_32={0},
+        )
+        return OpsUnit(
+            cc="gfx950",
+            optional=set(),
+            pointer_args={0},
+            scalar_dtypes={1: "i32"},
+            constant_types={2: int},
+            specs=[tagged, dataclasses.replace(tagged, pointer_range_32=set())],
+        )
+
+    def test_kernel_name_suffix_marks_pointer_range(self) -> None:
+        """Tagged arg gets an ``s`` suffix; untagged name is unchanged."""
+        tagged, untagged = self._create_unit().specs
+        fields = AutotuneAttrs.fields_for("hip")
+        self.assertTrue(
+            gen_kernel_name(_addmm_fwd, tagged, "gfx950", fields).endswith("_0ds1")
+        )
+        self.assertTrue(
+            gen_kernel_name(_addmm_fwd, untagged, "gfx950", fields).endswith("_0d1")
+        )
+
+    def test_guarded_calls_tagged_variant_guards_storage_size(self) -> None:
+        """Only the tagged variant emits the storage-size guard."""
+
+        @triton.jit
+        def _kernel(x, N, BLK: tl.constexpr) -> None:  # noqa: N802
+            pass
+
+        unit = self._create_unit()
+        descriptors = build_arg_descriptors(_kernel, unit)
+        specs = (
+            gen_guarded_calls(
+                _kernel, unit, descriptors, AutotuneAttrs.fields_for("hip")
+            )
+            .strip()
+            .split("\n\n")
+        )
+
+        self.assertEqual(len(specs), 2)
+        guard = "if (fits_i32(storage_nbytes(x.value())))"
+        self.assertIn(guard, specs[0].split("\n"))
+        self.assertNotIn("storage_nbytes", specs[1])
+
+    @parameterized.expand([("scalar", 1), ("constexpr", 2)])
+    def test_spec_guards_rejects_non_tensor_tag(self, _name: str, idx: int) -> None:
+        """A tag without a preceding has_value() guard fails at codegen."""
+
+        @triton.jit
+        def _kernel(x, N, BLK: tl.constexpr) -> None:  # noqa: N802
+            pass
+
+        unit = self._create_unit()
+        spec = dataclasses.replace(unit.specs[0], pointer_range_32={idx})
+        desc_by_idx = {d.index: d for d in build_arg_descriptors(_kernel, unit)}
+        with self.assertRaisesRegex(ValueError, f"pointer_range_32 arg {idx}"):
+            spec_guards(spec, desc_by_idx, AutotuneAttrs.fields_for("hip"))
 
 
 class IsNonEmptyMappingOfTypeTest(unittest.TestCase):

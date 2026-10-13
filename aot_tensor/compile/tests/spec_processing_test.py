@@ -9,6 +9,9 @@ import unittest
 from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 
+# @manual=//caffe2:torch
+import torch
+
 # @manual=//triton:triton
 import triton
 import triton.language as tl
@@ -33,11 +36,18 @@ from aot_tensor.compile.triton.spec_processing import (
     compute_autotune_param_names,
     gen_compile_arg,
     KernelSpec,
+    MAX_POINTER_RANGE_32_VARIANTS,
     OpsUnit,
     RawKernelSpec,
 )
-from aot_tensor.compile.triton.utils import kernel_param_names
+from aot_tensor.compile.triton.utils import (
+    kernel_param_names,
+    pointer_range_32_args,
+    POINTER_RANGE_32_MAX_BYTES,
+)
 from parameterized import parameterized
+from triton import knobs
+from triton.backends import backends as triton_backends
 from triton.backends.compiler import GPUTarget
 
 
@@ -89,6 +99,25 @@ def _reduction_like_fwd(
     appearing in ``cfg.kwargs``.
     """
     pass
+
+
+@triton.jit(do_not_specialize=["c_ptr"])
+def _pointer_range_fwd(
+    a_ptr,
+    b_ptr,
+    c_ptr,
+    n,
+    scale,
+    ACT: tl.constexpr,
+) -> None:
+    pass
+
+
+def _pointer_range_call_args(
+    a: torch.Tensor, b: torch.Tensor, c: torch.Tensor
+) -> Dict[str, Any]:
+    # "SILU" contains an "S" but is a constexpr value, never a tag.
+    return {"a_ptr": a, "b_ptr": b, "c_ptr": c, "n": 3, "scale": 0.5, "ACT": "SILU"}
 
 
 def _make_kernel_spec(**kwargs: Any) -> KernelSpec:
@@ -203,6 +232,20 @@ class GenCompileArgTest(unittest.TestCase):
         self.assertNotIn((15,), ast_source.attrs)
         self.assertEqual(ast_source.constants[(15,)], 64)
 
+    def test_pointer_range_32_emits_pointer_range_attr(self) -> None:
+        """pointer_range_32 idx gets tt.pointer_range=32, merged with divisibility."""
+        spec = _make_kernel_spec(
+            signature={0: "*fp32", 1: "*fp32"},
+            divisible_by_16={0},
+            pointer_range_32={0, 1},
+        )
+        ast_source = gen_compile_arg(spec, _addmm_fwd)[0]
+        self.assertEqual(
+            ast_source.attrs[(0,)],
+            [["tt.divisibility", 16], ["tt.pointer_range", 32]],
+        )
+        self.assertEqual(ast_source.attrs[(1,)], [["tt.pointer_range", 32]])
+
 
 class ValidateConvertedSpecsTest(unittest.TestCase):
     """Tests for _validate_converted_specs()."""
@@ -224,6 +267,7 @@ class ValidateConvertedSpecsTest(unittest.TestCase):
             ("constants_too_large", {"constants": {42: 64}}),
             ("divisible_by_16_too_large", {"divisible_by_16": {5}}),
             ("divisible_by_8_too_large", {"divisible_by_8": {7}}),
+            ("pointer_range_32_too_large", {"pointer_range_32": {4}}),
             ("signature_negative", {"signature": {-1: "*fp32"}}),
         ]
     )
@@ -458,6 +502,117 @@ class ConvertSpecsFP8Test(unittest.TestCase):
         base_specs: list[RawKernelSpec] = [{"signature": [(input_dtype, 16)]}]
         unit = OpsUnit.from_raw_specs(base_specs, gpu_target)
         self.assertEqual(unit.specs[0].signature[0], expected_dtype)
+
+
+class ConvertSpecsPointerRange32Test(unittest.TestCase):
+    """Tests for OpsUnit.from_raw_specs() ``pointer_range_32`` variants."""
+
+    _HIP: GPUTarget = GPUTarget("hip", "gfx950", 64)
+
+    def test_hip_emits_tagged_then_untagged(self) -> None:
+        """Tagged variant precedes its untagged fallback; scalar idx dropped."""
+        base_specs: list[RawKernelSpec] = [
+            {
+                "signature": [("*fp32", 16), ("*fp32", 16), ("i32", 16)],
+                "pointer_range_32": [0, 1, 2],
+            }
+        ]
+        unit = OpsUnit.from_raw_specs(base_specs, self._HIP)
+        self.assertEqual([s.pointer_range_32 for s in unit.specs], [{0, 1}, set()])
+        self.assertEqual(
+            unit.specs[0], dataclasses.replace(unit.specs[1], pointer_range_32={0, 1})
+        )
+
+    def test_hip_interleaves_variants_per_raw_spec(self) -> None:
+        """Each raw spec's tagged variant sits right before its own fallback,
+        so the original first-match winner is preserved."""
+        base_specs: list[RawKernelSpec] = [
+            {"signature": [("*fp32", 16), ("i32", 16)], "pointer_range_32": [0]},
+            {"signature": [("*fp32", 16), "i32"], "pointer_range_32": [0]},
+        ]
+        unit = OpsUnit.from_raw_specs(base_specs, self._HIP)
+        self.assertEqual(
+            [(s.pointer_range_32, s.divisible_by_16) for s in unit.specs],
+            [({0}, {0, 1}), (set(), {0, 1}), ({0}, {0}), (set(), {0})],
+        )
+
+    @parameterized.expand(
+        [("small_first", [[0, 1], [0], []]), ("large_first", [[0], [0, 1], []])]
+    )
+    def test_hip_same_base_orders_supersets_first(
+        self, _name: str, tag_lists: list[list[int]]
+    ) -> None:
+        """Raw specs differing only in tagged sets share one base: supersets
+        precede subsets and the base comes last, whatever the capture order,
+        so no variant is shadowed by an earlier, weaker guard."""
+        sig: list[SignatureElement] = [("*fp32", 16), ("*fp32", 16)]
+        base_specs: list[RawKernelSpec] = [
+            {"signature": sig, "pointer_range_32": tags} for tags in tag_lists
+        ]
+        unit = OpsUnit.from_raw_specs(base_specs, self._HIP)
+        self.assertEqual([s.pointer_range_32 for s in unit.specs], [{0, 1}, {0}, set()])
+
+    @parameterized.expand(
+        [
+            (
+                "ties_keep_first_seen",
+                [[0], [1], [2], [3], [4], [5]],
+                [{0}, {1}, {2}, {3}],
+            ),
+            (
+                "keeps_largest_seen_late",
+                [[0], [1], [2], [3], [4], [0, 1, 2, 3, 4, 5]],
+                [{0, 1, 2, 3, 4, 5}, {0}, {1}, {2}],
+            ),
+        ]
+    )
+    def test_hip_caps_variants_per_base(
+        self, _name: str, tag_lists: list[list[int]], expected: list[set[int]]
+    ) -> None:
+        """Past the cap the smallest tagged sets are dropped, with a warning."""
+        self.assertEqual(len(expected), MAX_POINTER_RANGE_32_VARIANTS)
+        sig: list[SignatureElement] = [("*fp32", 16)] * 6
+        base_specs: list[RawKernelSpec] = [
+            {"signature": sig, "pointer_range_32": tags} for tags in tag_lists
+        ]
+        with self.assertLogs(
+            "aot_tensor.compile.triton.spec_processing", level=logging.WARNING
+        ):
+            unit = OpsUnit.from_raw_specs(base_specs, self._HIP)
+        self.assertEqual([s.pointer_range_32 for s in unit.specs], expected + [set()])
+
+    def test_hip_buffer_ops_disabled_at_build(self) -> None:
+        """Specs captured with buffer ops on build untagged when the knob is
+        off at build time."""
+        base_specs: list[RawKernelSpec] = [
+            {"signature": [("*fp32", 16), ("i32", 16)], "pointer_range_32": [0]}
+        ]
+        with knobs.amd.scope():
+            knobs.amd.use_buffer_ops = False
+            unit = OpsUnit.from_raw_specs(base_specs, self._HIP)
+        self.assertEqual([s.pointer_range_32 for s in unit.specs], [set()])
+
+    @parameterized.expand(
+        [
+            (
+                "cuda_ignores_key",
+                GPUTarget("cuda", 90, 32),
+                {"signature": [("*fp32", 16)], "pointer_range_32": [0]},
+            ),
+            ("hip_without_key", _HIP, {"signature": [("*fp32", 16)]}),
+            (
+                "hip_none_arg_only",
+                _HIP,
+                {"signature": [("*fp32", 16), None], "pointer_range_32": [1]},
+            ),
+        ]
+    )
+    def test_single_untagged_spec(
+        self, _name: str, gpu_target: GPUTarget, raw_spec: RawKernelSpec
+    ) -> None:
+        unit = OpsUnit.from_raw_specs([raw_spec], gpu_target)
+        self.assertEqual(len(unit.specs), 1)
+        self.assertEqual(unit.specs[0].pointer_range_32, set())
 
 
 class ConvertSpecsTest(unittest.TestCase):
@@ -697,6 +852,87 @@ class AutotuneAttrsTest(unittest.TestCase):
             signature={}, constants={}, divisible_by_16=set(), divisible_by_8=set()
         )
         self.assertIsNot(a.autotune, b.autotune)
+
+
+class PointerRange32ArgsTest(unittest.TestCase):
+    """Tests for pointer_range_32_args() (the ROCm JIT's own binder)."""
+
+    def test_tags_pointers_with_storage_up_to_int32_max(self) -> None:
+        """A view of a >2 GiB storage is not tagged; non-pointers never are.
+
+        Also pins the codegen guard's bound to the JIT's.
+        """
+        edge = torch.empty(POINTER_RANGE_32_MAX_BYTES, dtype=torch.uint8, device="meta")
+        big = torch.empty(
+            POINTER_RANGE_32_MAX_BYTES + 1, dtype=torch.uint8, device="meta"
+        )
+        small = torch.empty(4, device="meta")
+        self.assertEqual(
+            pointer_range_32_args(
+                _pointer_range_fwd, _pointer_range_call_args(edge, big[:16], small)
+            ),
+            [0],
+        )
+
+    def test_skips_do_not_specialize(self) -> None:
+        small = torch.empty(4, device="meta")
+        self.assertEqual(
+            pointer_range_32_args(
+                _pointer_range_fwd, _pointer_range_call_args(small, small, small)
+            ),
+            [0, 1],
+        )
+
+    @parameterized.expand(
+        [
+            ("heuristics", triton.heuristics({"ACT": lambda _meta: "SILU"})),
+            (
+                "autotuner",
+                triton.autotune(configs=[triton.Config({"ACT": "SILU"})], key=["n"]),
+            ),
+        ]
+    )
+    def test_unwraps_to_jit(self, _name: str, wrap: Any) -> None:
+        small = torch.empty(4, device="meta")
+        self.assertEqual(
+            pointer_range_32_args(
+                wrap(_pointer_range_fwd), _pointer_range_call_args(small, small, small)
+            ),
+            [0, 1],
+        )
+
+    def test_empty_for_non_jit_fn(self) -> None:
+        def plain(a_ptr: torch.Tensor) -> None:
+            pass
+
+        self.assertEqual(
+            pointer_range_32_args(plain, {"a_ptr": torch.empty(4, device="meta")}),
+            [],
+        )
+
+    def test_empty_without_amd_backend(self) -> None:
+        small = torch.empty(4, device="meta")
+        with patch.dict(triton_backends):
+            del triton_backends["amd"]
+            self.assertEqual(
+                pointer_range_32_args(
+                    _pointer_range_fwd, _pointer_range_call_args(small, small, small)
+                ),
+                [],
+            )
+
+    def test_empty_when_buffer_ops_disabled(self) -> None:
+        small = torch.empty(4)
+        # knobs.scope(), not patch.object: the knob setter also writes the env
+        # var, which patch.object's restore leaves behind.
+        with knobs.amd.scope():
+            knobs.amd.use_buffer_ops = False
+            self.assertEqual(
+                pointer_range_32_args(
+                    _pointer_range_fwd, _pointer_range_call_args(small, small, small)
+                ),
+                [],
+            )
 
 
 class KernelParamNamesTest(unittest.TestCase):

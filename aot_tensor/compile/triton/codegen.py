@@ -297,6 +297,8 @@ def gen_kernel_name(
             suffix += "d"
         if i in spec.divisible_by_8:
             suffix += "e"
+        if i in spec.pointer_range_32:
+            suffix += "s"
     return "_".join([name, cc_str, sig, const] + autotune_configs + [suffix])
 
 
@@ -709,6 +711,25 @@ def _divisible_by_8_guards(
     return guards
 
 
+def _pointer_range_32_guards(
+    spec: KernelSpec,
+    desc_by_idx: dict[int, ArgDescriptor],
+) -> list[Guard]:
+    """Storage fits a 32-bit byte offset, mirroring Triton's HIPBackend
+    ``is_within_2gb``. Each tagged arg must be a tensor this spec binds, so
+    ``_dtype_guards`` (emitted first) has already checked ``has_value()``."""
+    guards = []
+    for i in spec.pointer_range_32:
+        d = desc_by_idx[i]
+        if not (isinstance(d, PointerArg) and i in spec.signature):
+            raise ValueError(
+                f"pointer_range_32 arg {i} ({d.name}) is not a tensor bound by "
+                "this spec; its has_value() would be unguarded"
+            )
+        guards.append(Guard(f"fits_i32(storage_nbytes({d.name}.value()))"))
+    return guards
+
+
 def spec_guards(
     spec: KernelSpec,
     desc_by_idx: dict[int, ArgDescriptor],
@@ -725,6 +746,7 @@ def spec_guards(
         *_autotune_guards(spec, autotune_fields),
         *_divisible_by_16_guards(spec, desc_by_idx),
         *_divisible_by_8_guards(spec, desc_by_idx),
+        *_pointer_range_32_guards(spec, desc_by_idx),
     ]
 
 

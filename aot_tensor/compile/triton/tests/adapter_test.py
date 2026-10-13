@@ -221,6 +221,20 @@ class InferSpecTest(unittest.TestCase):
         self.assertEqual(spec[1], "i64")
         self.assertEqual(spec[2], "fp32")
 
+    def test_pointer_range_32_key(self) -> None:
+        """Raw spec lists small tensor args for tt.pointer_range=32 on any
+        host build; only AMD compile targets consume it."""
+        x = torch.randn(4, 4)
+        result = infer_spec(
+            cast(KernelInterface[Callable[..., Any]], _two_block_kernel),
+            {},
+            x,
+            x,
+            BLOCK_M=16,
+            BLOCK_N=16,
+        )
+        self.assertEqual(result.get("pointer_range_32"), [0, 1])
+
     @parameterized.expand(
         [
             ("fp64", torch.float64, "*fp64"),

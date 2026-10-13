@@ -55,7 +55,7 @@ import logging
 import sys
 import typing
 from dataclasses import dataclass, field
-from typing import Any, Callable, cast, ClassVar
+from typing import Any, Callable, ClassVar, NotRequired, TypedDict
 
 import torch
 
@@ -71,14 +71,27 @@ from aot_tensor.compile.spec_conversion import (
     SignatureElement,
 )
 from aot_tensor.compile.triton.utils import cfg_constexpr_keys, unwrap_to_jit
+from triton import knobs
 from triton.backends.compiler import BaseBackend, GPUTarget
 from triton.compiler.compiler import ASTSource, max_shared_mem
 from triton.runtime.jit import JITFunction
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-# A raw kernel spec produced by infer_spec.  The only key is "signature".
-RawKernelSpec = dict[str, list[SignatureElement]]
+# Each distinct tagged set is one more compiled kernel per autotune config.
+MAX_POINTER_RANGE_32_VARIANTS: int = 4
+
+
+# A raw kernel spec produced by infer_spec: "signature" (always) and,
+# optionally, "pointer_range_32" (arg indices; consumed for AMD targets only).
+# TODO(changpan): move to structured per-arg types like ``aot_tensor/cute_specs.py``
+# (``TritonPointerArg(dtype, aligned_16, pointer_range_32, optional)``,
+# ``TritonScalarArg``, ...), with ``RawKernelSpec = tuple[TritonArg, ...]``, so
+# per-arg observations live in the signature; the scalar-divisibility TODO in
+# ``infer_spec`` lands there too.
+class RawKernelSpec(TypedDict):
+    signature: list[SignatureElement]
+    pointer_range_32: NotRequired[list[int]]
 
 
 def _max_dynamic_shared_per_block_optin(gpu_target: GPUTarget) -> int:
@@ -230,6 +243,9 @@ class KernelSpec:
         divisible_by_8: Indices whose scalar values are multiples of 8
             (pointer alignment is always ≥16, so meaningless for pointers).
         autotune: B values picked by the autotuner; see ``AutotuneAttrs``.
+        pointer_range_32: AMD only. Pointer indices compiled with
+            ``tt.pointer_range=32`` (enables buffer loads/stores); guarded at
+            runtime on the tensor's storage fitting a 32-bit byte offset.
     """
 
     signature: dict[int, str]
@@ -237,6 +253,7 @@ class KernelSpec:
     divisible_by_16: set[int]
     divisible_by_8: set[int]
     autotune: AutotuneAttrs = dataclasses.field(default_factory=AutotuneAttrs)
+    pointer_range_32: set[int] = dataclasses.field(default_factory=set)
 
 
 @dataclass
@@ -335,9 +352,10 @@ class OpsUnit:
         1. Convert raw specs to KernelSpecs
         2. Detect optional tensor args (cross-spec + 3-tuple)
         3. Validate consistency across converted specs
-        4. Apply autotuning (if tuned_func provided)
-        5. Deduplicate specs
-        6. Compute shared invariants (pointer_args, scalar_dtypes, constant_types)
+        4. Expand ``tt.pointer_range=32`` variants (AMD only)
+        5. Apply autotuning (if tuned_func provided)
+        6. Deduplicate specs
+        7. Compute shared invariants (pointer_args, scalar_dtypes, constant_types)
         """
         # Validate raw specs upfront, before any rewriting.
         num_params = _check_uniform_signature_length(base_specs)
@@ -345,6 +363,8 @@ class OpsUnit:
         optional = _detect_optional_args(specs) | three_tuple_optional
 
         _validate_converted_specs(specs, optional, num_params)
+
+        specs = _expand_pointer_range_32_variants(specs)
 
         autotune_fields = AutotuneAttrs.fields_for(gpu_target.backend)
         constexpr_keys = (
@@ -405,6 +425,8 @@ def gen_compile_arg(
         for idx in spec.divisible_by_16
         if idx not in spec.constants
     }
+    for idx in spec.pointer_range_32:
+        new_attrs.setdefault((idx,), []).append(["tt.pointer_range", 32])
 
     return (
         ASTSource(
@@ -507,6 +529,7 @@ def _check_arg_indices_in_range(
             | spec.constants.keys()
             | spec.divisible_by_16
             | spec.divisible_by_8
+            | spec.pointer_range_32
         )
         for i in all_indices:
             if not 0 <= i < num_params:
@@ -726,10 +749,13 @@ def _convert_raw_specs(
     union of optional_args detected from 3-tuple signature elements across
     all specs (backward compat with ``collect_constraints``).
     """
-    raw_specs = cast(list[dict[str, Any]], copy.deepcopy(base_specs))
+    raw_specs = copy.deepcopy(base_specs)
     is_amd = gpu_target.backend == "hip"
+    # Checked again at build time so AMDGCN_USE_BUFFER_OPS=0 disables the
+    # variants even for specs captured with buffer ops on.
+    use_pointer_range_32 = is_amd and knobs.amd.use_buffer_ops
 
-    result: list[KernelSpec] = []
+    specs: list[KernelSpec] = []
     three_tuple_optional: set[int] = set()
     for raw_spec in raw_specs:
         constraints = collect_constraints(raw_spec["signature"])
@@ -756,9 +782,57 @@ def _convert_raw_specs(
                     {"signature": spec.signature}
                 )
 
-        result.append(spec)
+        if use_pointer_range_32:
+            spec.pointer_range_32 = {
+                i
+                for i in raw_spec.get("pointer_range_32", [])
+                if spec.signature.get(i, "").startswith("*")
+            }
 
-    return result, three_tuple_optional
+        specs.append(spec)
+
+    return specs, three_tuple_optional
+
+
+def _expand_pointer_range_32_variants(specs: list[KernelSpec]) -> list[KernelSpec]:
+    """Per base spec, in first-seen order: its ``tt.pointer_range=32``
+    variants, largest tagged set first, then the untagged base.
+
+    Guards are first-match-wins and a variant's guards are the base's plus
+    one storage check per tagged pointer. Largest-first puts every superset
+    ahead of its subsets, so no variant is shadowed, and the base stays the
+    fallback for tensors whose storage exceeds 2 GiB. Raw specs sharing a
+    base collapse into one group, so the winner across bases is unchanged.
+    Past ``MAX_POINTER_RANGE_32_VARIANTS`` per base, the smallest tagged
+    sets are dropped (ties: latest-seen); their calls still match a smaller
+    variant or the base.
+    """
+    if not any(spec.pointer_range_32 for spec in specs):
+        return specs
+
+    groups: dict[str, tuple[KernelSpec, list[set[int]]]] = {}
+    for spec in specs:
+        base = dataclasses.replace(spec, pointer_range_32=set())
+        _, tag_sets = groups.setdefault(hash_spec(dataclasses.asdict(base)), (base, []))
+        tagged = spec.pointer_range_32
+        if tagged and tagged not in tag_sets:
+            tag_sets.append(tagged)
+
+    result: list[KernelSpec] = []
+    for base, tag_sets in groups.values():
+        ordered = sorted(tag_sets, key=len, reverse=True)
+        kept = ordered[:MAX_POINTER_RANGE_32_VARIANTS]
+        if dropped := ordered[MAX_POINTER_RANGE_32_VARIANTS:]:
+            logger.warning(
+                "Dropping %d tt.pointer_range=32 variant(s) %s past the cap of %d",
+                len(dropped),
+                [sorted(t) for t in dropped],
+                MAX_POINTER_RANGE_32_VARIANTS,
+            )
+        for tagged in kept:
+            result.append(dataclasses.replace(base, pointer_range_32=tagged))
+        result.append(base)
+    return result
 
 
 def _autotune_specs(

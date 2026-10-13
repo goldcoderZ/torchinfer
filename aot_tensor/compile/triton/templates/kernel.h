@@ -29,6 +29,15 @@ constexpr bool fits_i32(int64_t v) {
 #define FITS_I32_DEFINED_MACRO
 #endif
 
+#ifndef STORAGE_NBYTES_DEFINED_MACRO
+inline int64_t storage_nbytes(const torch::stable::Tensor& t) {
+  int64_t nbytes = 0;
+  STABLE_TORCH_ERROR_CODE_CHECK(aoti_torch_get_storage_size(t.get(), &nbytes));
+  return nbytes;
+}
+#define STORAGE_NBYTES_DEFINED_MACRO
+#endif
+
 // Both generated regions below are named after the kernel alone, so every .so
 // generated for that kernel defines the same `triton::aot::<kernel>` and
 // `triton::aot::<kernel>_meta` symbols. Multi-forward emits one .so per forward

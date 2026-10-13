@@ -34,6 +34,7 @@ from aot_tensor.compile.triton.utils import (
     AutotuneCache,
     is_autotuner,
     kernel_param_names,
+    pointer_range_32_args,
     try_get_autotuner,
     unwrap_to_jit,
 )
@@ -260,6 +261,9 @@ def infer_spec(  # noqa: C901
     Scalar int: always ``"i64"`` (safe default; user can annotate ``"i32"``
     to get a narrower variant via annotation-as-variant).
     Float: ``mangle_type`` → fp32.
+    ``"pointer_range_32"`` lists tensor args the ROCm JIT would tag
+    ``tt.pointer_range=32`` (see ``pointer_range_32_args``); only AMD targets
+    consume it.
     """
     triton_fn, call_args = _resolve_call_args(fn, *args, **kwargs)
     fn_sig = signature(triton_fn)
@@ -323,7 +327,11 @@ def infer_spec(  # noqa: C901
             spec.append("fp32")
         else:
             raise RuntimeError(f"TritonAOT: parameter {arg_name} needs annotation.")
-    return {"signature": spec}
+    raw: Dict[str, List[Any]] = {"signature": spec}
+    pointer_range = pointer_range_32_args(fn, call_args)
+    if pointer_range:
+        raw["pointer_range_32"] = pointer_range
+    return raw
 
 
 # =====================================================================
