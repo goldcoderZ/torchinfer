@@ -7,26 +7,52 @@ libraries. It currently supports Triton kernels.
 
 ## Requirements
 
-- Linux with an NVIDIA GPU
-- CUDA Toolkit 13.0 with development headers
-- Clang 20 or newer
-- Python 3.12
-- PyTorch 2.10 through 2.14 built for CUDA 13.0, with the Triton version it pins
+- Linux with Python 3.12 and either:
+  - an NVIDIA GPU, CUDA Toolkit 13.0 development headers, and Clang 20; or
+  - an AMD MI300X, ROCm 7.1, and the ROCm Clang toolchain.
+- PyTorch 2.10 through 2.14 with its matching Triton package. The dependency
+  extras below select the versions validated by this repository.
 
 Exported models target the PyTorch 2.12 stable ABI: load them with PyTorch 2.12
 or newer, or with the version that lowered them.
 
 ## Installation
 
+Choose exactly one backend extra. The validated CUDA and ROCm wheels live on
+separate PyTorch indexes, so pass the matching index to pip.
+
 ```bash
 git clone https://github.com/meta-pytorch/torchinfer.git
 cd torchinfer
-pip install --extra-index-url https://download.pytorch.org/whl/cu130 .
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+With NVIDIA:
+
+```bash
+python3 -m pip install \
+  --extra-index-url https://download.pytorch.org/whl/cu130 \
+  '.[nvidia]'
 export CXX=/usr/bin/clang++-20
 export TORCH_USE_RTLD_GLOBAL=YES
 ```
 
-Lowering uses the CUDA Toolkit of the `nvcc` on your `PATH`, or else
+With AMD MI300X:
+
+```bash
+python3 -m pip install \
+  --extra-index-url https://download.pytorch.org/whl/rocm7.1 \
+  '.[amd]'
+export ROCM_HOME=/opt/rocm HIP_HOME=/opt/rocm
+export CXX=/opt/rocm/llvm/bin/clang++
+export TORCH_USE_RTLD_GLOBAL=YES
+```
+
+Do not pass `-e`: lowering reads packaged C++ templates through
+`importlib.resources`.
+
+On NVIDIA, lowering uses the CUDA Toolkit of the `nvcc` on your `PATH`, or else
 `/usr/local/cuda`. Set `CUDA_HOME` if that is not CUDA 13.0.
 
 ## Quick start
@@ -76,14 +102,14 @@ def vector_add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 #     # >>> ADDED BY AOT-T:
 #     grid = ((n_elements + 1023) // 1024,)
 #     # >>> ADDED BY AOT-T (REPLACED ORIGINAL TRITON LAUNCHER):
-#     # AOT-T replaces the high-overhead Python-based JIT launcher 'add_kernel[grid](...)' 
+#     # AOT-T replaces the high-overhead Python-based JIT launcher 'add_kernel[grid](...)'
 #     # with a direct native binding call to the compiled binary library via PyTorch Custom Operators.
 #     torch.ops.aot_tensor.add_kernel(
-#         grid, x, y, out, n_elements, 
-#         BLOCK_SIZE=1024, 
-#         num_warps=num_warps, 
-#         num_stages=num_stages, 
-#         num_ctas=num_ctas, 
+#         grid, x, y, out, n_elements,
+#         BLOCK_SIZE=1024,
+#         num_warps=num_warps,
+#         num_stages=num_stages,
+#         num_ctas=num_ctas,
 #         auto_tma=auto_tma
 #     )
 # === Source Code of add_kernel_meta ===

@@ -6,14 +6,36 @@ We actively welcome your pull requests.
 1. Fork the repo and create your branch from `main`.
 2. If you've added code that should be tested, add tests.
 3. If you've changed APIs, update the documentation.
-4. Ensure the test suite passes. From the repository root, install the package
-   with its test dependencies and run pytest:
+4. Ensure the test suite passes. From the repository root, create and activate
+   a virtual environment:
 
    ```bash
-   pip install --extra-index-url https://download.pytorch.org/whl/cu130 \
-     -e ".[test]" --config-settings editable_mode=compat
-   pytest
+   python3 -m venv .venv
+   source .venv/bin/activate
    ```
+
+   With NVIDIA:
+
+   ```bash
+   python3 -m pip install \
+     --extra-index-url https://download.pytorch.org/whl/cu130 \
+     '.[nvidia,test]'
+   python3 -m pytest
+   ```
+
+   With AMD MI300X:
+
+   ```bash
+   python3 -m pip install \
+     --extra-index-url https://download.pytorch.org/whl/rocm7.1 \
+     '.[amd,test]'
+   python3 -m pytest
+   ```
+
+   Pytest imports the checkout through the repository's `pythonpath` setting.
+   pip installs the package non-editably by default, so rerun the matching
+   `pip install` command after changing package code before running examples or
+   otherwise validating the installed package.
 
    If you edit `kernel.h` or `kernel.cpp` in `aot_tensor/compile/triton/templates/`,
    make the same change to its HIP version in the `hip/` subdirectory. A test

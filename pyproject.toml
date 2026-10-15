@@ -17,10 +17,17 @@ dependencies = [
     # this file's license field when lowering runs from the repository root.
     "setuptools>=77.0.3",
     "torch>=2.10,<2.15",
-    "triton",
 ]
 
 [project.optional-dependencies]
+amd = [
+    "torch==2.13.0",
+    "triton-rocm==3.7.1",
+]
+nvidia = [
+    "torch==2.14.0",
+    "triton==3.8.0",
+]
 test = ["parameterized", "pytest"]
 
 [project.urls]
