@@ -54,16 +54,6 @@ int compute_capability() {
 } // namespace
 
 namespace {
-#ifdef USE_ROCM
-void enable_large_smem_or_throw(int shared, hipFunction_t func) {
-  // HIP: LDS is fully available by default; no opt-in needed.
-  // TODO: investigate -- should we still hard-reject ``shared >
-  // hipDeviceAttributeMaxSharedMemoryPerBlock`` here, symmetric with the
-  // CUDA branch below? Today AMD AOT-T silently launches and may fail
-  // opaquely in hipLaunchKernel.
-  return;
-}
-#else
 // Mirrors upstream Triton's NVIDIA driver setup
 // (``third-party/triton/.../nvidia/backend/driver.c``) plus an AOT-T-
 // specific hard reject for ``shared > shared_optin`` -- the JIT path's
@@ -96,7 +86,6 @@ void enable_large_smem_or_throw(int shared, CUfunction func) {
         shared_optin - shared_static));
   }
 }
-#endif
 } // namespace
 
 // Hidden for the same reason as the prototypes in kernel.h: one .so per

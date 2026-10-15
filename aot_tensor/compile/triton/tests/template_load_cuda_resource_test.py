@@ -28,8 +28,9 @@ class TemplateCudaApiTest(unittest.TestCase):
         self.assertIn("cuDeviceGetAttribute", kernel_cpp)
         self.assertIn("CUfunction", kernel_cpp)
 
-        # Verify HIP headers are NOT present.
-        # Does not include hipFunction_t which already defined under USE_ROCM
+        # Verify HIP code is NOT present: AMD renders hip/kernel.cpp.
+        self.assertNotIn("hipFunction_t", kernel_cpp)
+        self.assertNotIn("USE_ROCM", kernel_cpp)
         self.assertNotIn("hip/HIPContext.h", kernel_cpp)
         self.assertNotIn("HIPStreamMasqueradingAsCUDA.h", kernel_cpp)
 

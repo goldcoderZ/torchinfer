@@ -641,6 +641,63 @@ class CompilerTest(unittest.TestCase):
 
     @parameterized.expand(
         [
+            ("cuda", False, "cudaStream_t", "hipStream_t"),
+            ("rocm", True, "hipStream_t", "cudaStream_t"),
+        ]
+    )
+    def test_generated_sources_use_backend_apis(
+        self, _name: str, amd: bool, present: str, absent: str
+    ) -> None:
+        """A ROCm build of PyTorch renders the HIP templates."""
+        backend = "hip" if amd else "cuda"
+        func = self._create_mock_func()
+        unit = self._create_mock_unit()
+        descriptors = self._create_descriptors()
+        autotune_fields = AutotuneAttrs.fields_for(backend)
+
+        with patch("aot_tensor.compile.template_utils.is_amd", return_value=amd):
+            sources = {
+                "kernel.h": generate_header_content(
+                    tuned_func=None,
+                    func=func,
+                    unit=unit,
+                    descriptors=descriptors,
+                    tuner_fallback=False,
+                    autotune_fields=autotune_fields,
+                ),
+                "kernel.cpp": generate_kernel_cpp_content(
+                    func,
+                    unit,
+                    descriptors,
+                    "_addmm_fwd",
+                    ["// mock generated specs"],
+                    autotune_fields,
+                    backend=backend,
+                ),
+            }
+        for name, content in sources.items():
+            with self.subTest(source=name):
+                self.assertIn(present, content)
+                self.assertNotIn(absent, content)
+
+    @parameterized.expand([("cuda", "cuda", True), ("hip", "hip", False)])
+    def test_launch_header_include_is_cuda_only(
+        self, _name: str, backend: str, included: bool
+    ) -> None:
+        """A Level-1 launcher call pulls in NVIDIA's launch.h; HIP sources never do."""
+        content = generate_kernel_cpp_content(
+            self._create_mock_func(),
+            self._create_mock_unit(),
+            self._create_descriptors(),
+            "_addmm_fwd",
+            ["// calls triton_launch_kernel(...)"],
+            AutotuneAttrs.fields_for(backend),
+            backend=backend,
+        )
+        self.assertEqual('#include "nvidia/backend/launch.h"' in content, included)
+
+    @parameterized.expand(
+        [
             ("default_prefix", "_addmm_fwd"),
             ("custom_prefix", "my_custom_kernel"),
         ]

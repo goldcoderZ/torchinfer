@@ -1228,14 +1228,14 @@ def generate_kernel_cpp_content(
 ) -> str:
     """Generate the content of the kernel .cpp file.
 
-    *backend* is only used for hipification; per-backend autotune field
-    selection is delegated to *autotune_fields*.
+    *backend* selects hipification of the generated code and the launch.h
+    include; per-backend autotune field selection is delegated to
+    *autotune_fields*.
     """
     kernel_specs = "\n".join(generated_specs)
     selector = gen_selector(func, unit, descriptors, autotune_fields)
 
-    # On AMD, apply hipification to generated code (KERNEL_SPECS, SELECTOR)
-    # Templates are already hipified at load time (from hip/ subdirectory)
+    # On AMD, hipify the generated code; the template has a HIP version.
     if backend == "hip":
         from torch._inductor.codegen.aoti_hipify_utils import maybe_hipify_code_wrapper
 
@@ -1251,8 +1251,9 @@ def generate_kernel_cpp_content(
     # nvidia_extension_builder._vendor_launch_header). Only emit it when a
     # Level-1 launcher was actually generated: gen_launcher falls back to the
     # legacy cuLaunchKernel launcher when launch.h is unavailable, and a
-    # legacy-only build must not require the header.
-    if "triton_launch_kernel" in kernel_specs:
+    # legacy-only build must not require the header. The Level-1 launcher is
+    # CUDA-only (gen_launcher needs a cubin), so HIP sources never include it.
+    if backend == "cuda" and "triton_launch_kernel" in kernel_specs:
         header_include += '#include "nvidia/backend/launch.h"\n'
 
     cpp_content = TRITON_TEMPLATES.render(

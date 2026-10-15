@@ -5,7 +5,9 @@
 """Load and render the per-DSL C++ code templates.
 
 A ``TemplateSet`` bundles a DSL's resource package with its generate-marker
-tag; rendering swaps each marked region for generated code.
+tag; rendering swaps each marked region for generated code. The templates are
+written for CUDA; a template that uses CUDA APIs also has a HIP version under
+``hip/``, edited together with it and loaded on ROCm builds of PyTorch.
 """
 
 import re
@@ -13,7 +15,11 @@ from collections import Counter
 from dataclasses import dataclass
 from importlib import resources
 
+from aot_tensor.build.gpu_backend import is_amd
 from aot_tensor.constants import generated_header
+
+# Subdirectory of a template package that holds the HIP versions.
+HIP_TEMPLATE_DIR: str = "hip"
 
 
 def render_template(
@@ -85,8 +91,15 @@ class TemplateSet:
     tag: str
 
     def load(self, name: str) -> str:
-        """Raw text of template ``name`` (Buck picks CUDA vs hipified HIP)."""
-        return resources.files(self.package).joinpath(name).read_text()
+        """Raw text of template ``name``.
+
+        On a ROCm build of PyTorch, the HIP version of ``name`` if it has one.
+        """
+        root = resources.files(self.package)
+        hip_template = root.joinpath(HIP_TEMPLATE_DIR, name)
+        if is_amd() and hip_template.is_file():
+            return hip_template.read_text()
+        return root.joinpath(name).read_text()
 
     def render(self, name: str, replacements: dict[str, str]) -> str:
         """Load ``name`` and fill its ``// __<tag>_GENERATE_*__`` regions.

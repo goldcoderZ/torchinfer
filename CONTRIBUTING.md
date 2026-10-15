@@ -14,6 +14,10 @@ We actively welcome your pull requests.
      -e ".[test]" --config-settings editable_mode=compat
    pytest
    ```
+
+   If you edit `kernel.h` or `kernel.cpp` in `aot_tensor/compile/triton/templates/`,
+   make the same change to its HIP version in the `hip/` subdirectory. A test
+   checks that the two define the same functions.
 5. Make sure your Python code lints. From the repository root, install
    [Lintrunner](https://github.com/pytorch/pytorch/wiki/lintrunner) and the
    adapter required by `.lintrunner.toml`:

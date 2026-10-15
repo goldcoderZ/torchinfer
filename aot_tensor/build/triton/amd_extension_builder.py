@@ -22,9 +22,9 @@ class AmdExtensionBuilder(NvidiaExtensionBuilder):
     """
     Extension builder for AMD HIP (ROCm) backend.
 
-    Templates are pre-hipified at Buck build time, and compiler.py generates
-    HIP code directly (hipFunction_t, hipModuleLaunchKernel, etc.).
-    Thus we need ROCm, but no runtime hipification is needed here.
+    Codegen renders the checked-in HIP templates and hipifies the launch code
+    it generates (hipFunction_t, hipModuleLaunchKernel, etc.), so building
+    needs ROCm but no further conversion.
     """
 
     def _default_gpu_toolkit_path(self) -> str:
