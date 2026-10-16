@@ -15,6 +15,7 @@
 #include <string>
 
 // __CUTEDSL_AOT_GENERATE_BEGIN__ OP_NAME
+#define CUTEDSL_OP_NAMESPACE placeholder
 #define CUTEDSL_OP_NAME "placeholder"
 #define CUTEDSL_ENTRY_SYMBOL "placeholder_entry"
 #define CUTEDSL_SIDECAR_NAME "placeholder_cutedsl_impl.so"
@@ -84,18 +85,18 @@ void cutedsl_dummy_op() {}
 
 } // namespace
 
-STABLE_TORCH_LIBRARY_FRAGMENT(triton_aot, m) {
+STABLE_TORCH_LIBRARY_FRAGMENT(CUTEDSL_OP_NAMESPACE, m) {
   m.def(CUTEDSL_OP_SCHEMA);
 }
 
-STABLE_TORCH_LIBRARY_IMPL(triton_aot, CUDA, m) {
+STABLE_TORCH_LIBRARY_IMPL(CUTEDSL_OP_NAMESPACE, CUDA, m) {
   m.impl(CUTEDSL_OP_NAME, TORCH_BOX(&cutedsl_op));
 }
 
-STABLE_TORCH_LIBRARY_IMPL(triton_aot, CPU, m) {
+STABLE_TORCH_LIBRARY_IMPL(CUTEDSL_OP_NAMESPACE, CPU, m) {
   m.impl(CUTEDSL_OP_NAME, TORCH_BOX(&cutedsl_dummy_op));
 }
 
-STABLE_TORCH_LIBRARY_IMPL(triton_aot, Meta, m) {
+STABLE_TORCH_LIBRARY_IMPL(CUTEDSL_OP_NAMESPACE, Meta, m) {
   m.impl(CUTEDSL_OP_NAME, TORCH_BOX(&cutedsl_dummy_op));
 }

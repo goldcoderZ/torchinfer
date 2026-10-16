@@ -8,7 +8,7 @@ from __future__ import annotations
 # (`cute.compile(...).export_to_c(prefix)` -> {prefix}.h + {prefix}.o); we
 # only write the two small C++ shims that wrap it and call into it:
 #
-#   model calls  torch.ops.triton_aot.{op}(Tensor, int, ...)
+#   model calls  torch.ops.aot_tensor.{op}(Tensor, int, ...)
 #        |
 #        v
 #   {op}_torch_op.cpp      generate_torch_op_content()    --> {ext}.so
@@ -56,6 +56,7 @@ from aot_tensor.compile.cutedsl.codegen import (
     validate_cutedsl_op,
 )
 from aot_tensor.compile.template_utils import CUTEDSL_TEMPLATES
+from aot_tensor.constants import DEFAULT_OP_NAMESPACE_PREFIX
 from aot_tensor.cute_specs import CuTeRawSpec, resolve_runtime_args
 from aot_tensor.types import CuTeAOT
 
@@ -153,13 +154,13 @@ def generate_torch_op_content(
     ]
     op_fn = "\n".join(op_lines) + "\n"
 
-    # The torch library registration is static template text; only the op name and
-    # schema vary, and they reach it through the OP_NAME macros (the op/dummy_op
-    # function names are file-static, so the registration needs no codegen).
+    # Registration is static template text; namespace, op name and schema come in
+    # through the OP_NAME macros.
     return CUTEDSL_TEMPLATES.render(
         "cutedsl_torch_op.cpp",
         {
             "OP_NAME": (
+                f"#define CUTEDSL_OP_NAMESPACE {DEFAULT_OP_NAMESPACE_PREFIX}\n"
                 f'#define CUTEDSL_OP_NAME "{op_name}"\n'
                 f'#define CUTEDSL_ENTRY_SYMBOL "{prefix}_entry"\n'
                 f"#define CUTEDSL_SIDECAR_NAME {_quote_cpp_string(sidecar_so_name)}\n"

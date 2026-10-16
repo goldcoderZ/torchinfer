@@ -37,6 +37,7 @@ from aot_tensor.compile.cutedsl.pipeline import (
     generate_sidecar_entry_content,
     generate_torch_op_content,
 )
+from aot_tensor.constants import DEFAULT_OP_NAMESPACE_PREFIX
 from aot_tensor.cute_specs import CuTeConstexprArg, CuTeScalarArg, CuTeTensorArg
 from parameterized import parameterized
 
@@ -334,8 +335,11 @@ class GenerateContentTest(unittest.TestCase):
         self.assertIn("m.def(CUTEDSL_OP_SCHEMA)", out)
         self.assertIn('#define CUTEDSL_OP_SCHEMA "op(', out)
         self.assertIn("torch::stable::Tensor x", out)
-        self.assertIn("STABLE_TORCH_LIBRARY_IMPL(triton_aot, CUDA, m)", out)
-        self.assertIn("TORCH_BOX(&cutedsl_op)", out)
+        self.assertIn(
+            f"#define CUTEDSL_OP_NAMESPACE {DEFAULT_OP_NAMESPACE_PREFIX}\n", out
+        )
+        self.assertIn("STABLE_TORCH_LIBRARY_IMPL(CUTEDSL_OP_NAMESPACE, CUDA, m)", out)
+        self.assertIn("m.impl(CUTEDSL_OP_NAME, TORCH_BOX(&cutedsl_op))", out)
         # Per-op name/symbol/sidecar are rendered into the OP_NAME macro region;
         # the static dladdr loader comes verbatim from the template. Only the
         # basename is baked in (no absolute build path).

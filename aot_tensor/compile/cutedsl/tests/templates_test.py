@@ -10,6 +10,7 @@ fills per op. No GPU or real CuTeDSL compile.
 import unittest
 
 from aot_tensor.compile.template_utils import CUTEDSL_TEMPLATES
+from aot_tensor.constants import DEFAULT_OP_NAMESPACE_PREFIX
 
 
 class CutedslTemplateTest(unittest.TestCase):
@@ -41,15 +42,19 @@ class CutedslTemplateTest(unittest.TestCase):
             self.assertIn(f"// __CUTEDSL_AOT_GENERATE_BEGIN__ {key}", torch_op)
             self.assertIn(f"// __CUTEDSL_AOT_GENERATE_END__ {key}", torch_op)
 
-        # Per-op name/symbol/sidecar/schema reach the static code through macros.
+        # Per-op values reach the static code through macros.
+        self.assertIn("CUTEDSL_OP_NAMESPACE", torch_op)
         self.assertIn("CUTEDSL_OP_NAME", torch_op)
         self.assertIn("CUTEDSL_ENTRY_SYMBOL", torch_op)
         self.assertIn("CUTEDSL_SIDECAR_NAME", torch_op)
         self.assertIn("CUTEDSL_OP_SCHEMA", torch_op)
 
-        # The torch library registration is static template text, driven by macros.
-        self.assertIn("STABLE_TORCH_LIBRARY_IMPL(triton_aot, CUDA, m)", torch_op)
+        # Registration is static text; the namespace comes only from the macro.
+        self.assertIn(
+            "STABLE_TORCH_LIBRARY_IMPL(CUTEDSL_OP_NAMESPACE, CUDA, m)", torch_op
+        )
         self.assertIn("m.impl(CUTEDSL_OP_NAME, TORCH_BOX(&cutedsl_op))", torch_op)
+        self.assertNotIn(DEFAULT_OP_NAMESPACE_PREFIX, torch_op)
 
         # Static relocatable-sidecar loader lives verbatim in the template.
         self.assertIn("dladdr", torch_op)

@@ -228,7 +228,7 @@ def generate_wrapper_files_skeleton(
     per DSL and are injected:
     - ``kernel_dir``: per-kernel output subdir name (DSL-specific derivation).
     - ``transformer``: the DSL's ``ast.NodeTransformer`` (rewrites launch sites
-      to ``torch.ops.triton_aot.*`` and emits the .so-loading preamble).
+      to ``torch.ops.aot_tensor.*`` and emits the .so-loading preamble).
     - ``import_filter``: optional final pass over the wrapper import header
       (CuTeDSL drops cutlass/cuda-only imports; Triton passes ``None``).
     """

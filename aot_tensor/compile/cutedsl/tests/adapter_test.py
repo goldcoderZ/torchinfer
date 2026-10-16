@@ -133,7 +133,7 @@ class CuTeFindKernelStrictnessTest(unittest.TestCase):
 
 class CuTeAOTOperatorTransformTest(unittest.TestCase):
     """CuTeDSL wrapper-codegen transform (lives in adapter.py): @torch.jit.unused
-    stripping + call detection/rewrite to torch.ops.triton_aot.*."""
+    stripping + call detection/rewrite to torch.ops.aot_tensor.*."""
 
     def _transform(self, global_names: set[str]) -> CuTeAOTOperatorTransform:
         # kernel only needs ``.name`` for the rewrite; a stub avoids a real CuTeAOT.
@@ -197,5 +197,5 @@ def launcher(x):
         tree = ast.parse(source)
         self._transform({"_vector_add_aot"}).visit(tree)
         code = ast.unparse(tree)
-        self.assertIn("torch.ops.triton_aot._cutedsl_vector_add(x, y, out, n)", code)
+        self.assertIn("torch.ops.aot_tensor._cutedsl_vector_add(x, y, out, n)", code)
         self.assertNotIn("_vector_add_aot(", code)

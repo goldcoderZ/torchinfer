@@ -17,7 +17,7 @@ from aot_tensor.compile.compile_state import (
     register_active,
 )
 from aot_tensor.compile.cutedsl.pipeline import compile_cutedsl_to_cpp
-from aot_tensor.constants import CUTEDSL
+from aot_tensor.constants import CUTEDSL, DEFAULT_OP_NAMESPACE_PREFIX
 from aot_tensor.cute_specs import sample_spec_and_hash
 from aot_tensor.transform.wrapper_codegen_utils import (
     find_sole_marker_in_globals,
@@ -148,7 +148,7 @@ def get_cutedsl_eager_cache() -> dict[Any, Any]:
 
 # =====================================================================
 # wrapper codegen (CuTeDSL): AST rewrite of bare CuTeAOT call sites into
-# torch.ops.triton_aot.* calls. Driven by transform/kernel_wrapper_codegen
+# torch.ops.aot_tensor.* calls. Driven by transform/kernel_wrapper_codegen
 # via CuTeAdapter.find_kernel / generate_wrapper_files (runtime dispatch).
 # =====================================================================
 
@@ -231,7 +231,7 @@ class CuTeAOTOperatorTransform(ast.NodeTransformer):
                         attr="ops",
                         ctx=ast.Load(),
                     ),
-                    attr="triton_aot",
+                    attr=DEFAULT_OP_NAMESPACE_PREFIX,
                     ctx=ast.Load(),
                 ),
                 attr=self._kernel.name,
