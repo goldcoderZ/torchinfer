@@ -110,7 +110,7 @@ def replace_kernels(
     # Phase 2: Replace FX graph nodes
     #   Walk the FX graph, find call_function nodes whose target name
     #   matches a loaded wrapper, and swap the target so that
-    #   kernel[grid](...) calls become torch.ops.triton_aot.* calls.
+    #   kernel[grid](...) calls become torch.ops.aot_tensor.* calls.
     replaced_count = 0
     for nodes in fx_m.graph.nodes:
         if nodes.op == "call_function" and nodes.target.__name__ in wrapper_dict.keys():
@@ -121,12 +121,10 @@ def replace_kernels(
             replaced_count += 1
 
     assert replaced_count > 0, (
-        f"No ops were replaced with triton_aot wrappers. "
+        f"No ops were replaced with AOT-T wrappers. "
         f"wrapper_dict={wrapper_dict}, compile_path={compile_path}"
     )
-    logger.info(
-        f"Successfully replaced {replaced_count} op(s) with triton_aot wrappers."
-    )
+    logger.info(f"Successfully replaced {replaced_count} op(s) with AOT-T wrappers.")
 
     fx_m.recompile()
     return fx_m

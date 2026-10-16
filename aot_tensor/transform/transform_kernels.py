@@ -72,7 +72,7 @@ def transform_kernels(
     """Generate AOT wrappers and replace FX graph nodes in one step.
 
     1. kernel_wrapper_codegen: AST-transforms wrapper functions,
-       rewrites kernel[grid](...) -> torch.ops.triton_aot.kernel(...),
+       rewrites kernel[grid](...) -> torch.ops.aot_tensor.kernel(...),
        writes {fn}_wrapper.py
     2. replace_kernels: loads wrappers and replaces graph node targets
     """

@@ -562,7 +562,7 @@ class TritonAdapter(AOTTAdapter[TritonAOT]):
 
         Only the Triton-specific output dir name and the
         ``TritonAOTOperatorTransform`` (which rewrites ``kernel[grid](...)`` into
-        ``torch.ops.triton_aot.*``) vary; the file-writing skeleton is shared via
+        ``torch.ops.<op_namespace>.*``) vary; the file-writing skeleton is shared via
         ``generate_wrapper_files_skeleton``.
         """
         jit_fn = unwrap_to_jit(match)
@@ -596,7 +596,7 @@ def collect(
 
 # =====================================================================
 # wrapper codegen (Triton): AST rewrite of kernel[grid](...) launch sites
-# into torch.ops.triton_aot.* calls. Driven by transform/kernel_wrapper_codegen
+# into torch.ops.<op_namespace>.* calls. Driven by transform/kernel_wrapper_codegen
 # via TritonAdapter.find_kernel / generate_wrapper_files (runtime dispatch).
 # =====================================================================
 

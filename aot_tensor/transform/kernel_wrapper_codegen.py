@@ -21,7 +21,7 @@ def kernel_wrapper_codegen(
 
     For each function containing AOT-T kernels, generates:
     - {fn_name}_original.py: Original source code with imports
-    - {fn_name}_wrapper.py: Transformed wrapper that uses torch.ops.triton_aot
+    - {fn_name}_wrapper.py: Transformed wrapper that calls torch.ops.aot_tensor.*
 
     DSL-agnostic: each active DSL (from ``dsl_state``) says whether it owns the
     kernel (``find_kernel``) and emits its own files (``generate_wrapper_files``);

@@ -16,10 +16,10 @@ torch::stable::Tensor _triton_aot_placeholder_noop(
 }
 } // namespace
 
-STABLE_TORCH_LIBRARY_FRAGMENT(triton_aot, m) {
+STABLE_TORCH_LIBRARY_FRAGMENT(aot_tensor, m) {
   m.def("_placeholder_noop(Tensor input) -> Tensor");
 }
-STABLE_TORCH_LIBRARY_IMPL(triton_aot, CPU, m) {
+STABLE_TORCH_LIBRARY_IMPL(aot_tensor, CPU, m) {
   m.impl("_placeholder_noop", TORCH_BOX(&_triton_aot_placeholder_noop));
 }
 // __TRITON_AOT_GENERATE_END__ TORCH_OP
